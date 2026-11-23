@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Last Light</title>
+<style>
+  :root { --bg: #050505; --text: #f2efe8; --muted: #a9a49a; --accent: #e9a24a; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  #view { position: fixed; inset: 0; background: #000; }
+  #view canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  /* burned-in camera overlay: hard white monospace, slightly soft like it went through the encoder */
+  .osd {
+    position: absolute; font: 700 15px/1.35 "SFMono-Regular", Menlo, Consolas, monospace; letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.92); text-shadow: 0 0 2px rgba(0, 0, 0, 0.9), 1px 1px 0 rgba(0, 0, 0, 0.6);
+    filter: blur(0.35px); pointer-events: none; white-space: pre; font-variant-numeric: tabular-nums;
+  }
+  #osdTL { top: 18px; left: 22px; }
+  #osdTR { top: 18px; right: 22px; text-align: right; }
+  #rec { color: #ff3b30; }
+  #rec.off { visibility: hidden; }
+  #osdBL { bottom: 18px; left: 22px; font-size: 13px; color: rgba(255, 255, 255, 0.75); }
+  #sub {
+    position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); max-width: min(760px, 86vw);
+    font: 600 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; text-align: center;
+    color: #fff; background: rgba(0, 0, 0, 0.55); padding: 7px 14px; border-radius: 4px; pointer-events: none;
+  }
+  #sub b { color: var(--accent); font-weight: 700; margin-right: 6px; }
+  #sub[hidden], #prompt[hidden] { display: none; }
+  #prompt {
+    position: absolute; left: 50%; top: 58%; transform: translateX(-50%); text-align: center; pointer-events: none;
+    font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  }
+  #promptBar { width: 140px; height: 3px; margin: 6px auto 0; background: rgba(255, 255, 255, 0.25); }
+  #promptBar i { display: block; height: 100%; width: 0; background: #fff; }
+  #screen {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.85));
+  }
+  #screen[hidden] { display: none; }
+  #card { width: min(460px, 90vw); padding: 26px 28px; background: rgba(14, 13, 12, 0.92); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; }
+  #card h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; letter-spacing: 0.01em; }
+  #card p { margin: 0 0 12px; color: var(--muted); }
+  #card ul { margin: 0 0 16px; padding: 0; list-style: none; color: var(--muted); font-size: 13px; }
+  #card li { display: grid; grid-template-columns: 110px 1fr; gap: 8px; padding: 3px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+  #card li b { color: var(--text); font-weight: 600; }
+  #status { color: var(--accent); font-variant-numeric: tabular-nums; min-height: 1.5em; margin-bottom: 12px; }
+  #go {
+    width: 100%; font: 600 15px/1 inherit; padding: 12px; border-radius: 7px; border: 0; cursor: pointer;
+    background: var(--accent); color: #1a1208;
+  }
+  #go:disabled { background: rgba(255, 255, 255, 0.12); color: var(--muted); cursor: default; }
+  #go:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  #overlay { display: none; }
+  @media (max-width: 720px) { .osd { font-size: 11px; } #osdTL, #osdBL { left: 12px; } #osdTR { right: 12px; } }
+</style>
+</head>
+<body>
+<div id="view">
+  <canvas id="c"></canvas>
+  <div class="osd" id="osdTL"><span id="rec">● REC</span>  <span id="elapsed">00:00:00</span></div>
+  <div class="osd" id="osdTR"><span id="stamp">2026-11-20 19:12:40 +0200</span>
+<span>NRC RANGER 07   BWC-2214</span>
+<span id="gps">HDG 000°  S29.68232 E17.94919</span></div>
+  <div class="osd" id="osdBL"><span id="wires">WIRES CUT 0/5</span>   <span id="torchState">TORCH OFF</span></div>
+  <div id="sub" hidden></div>
+  <div id="prompt" hidden><span id="promptText">Hold E · cut the wire</span><div id="promptBar"><i id="promptFill"></i></div></div>
+  <div id="screen">
+    <div id="card">
+      <h1 id="cardTitle">Last Light</h1>
+      <p id="cardText">Ranger bodycam, Namaqualand reserve. Poachers have set five wire snares on this slope. Find them and cut them before the light goes.</p>
+      <ul id="cardKeys">
+        <li><b>Mouse</b><span>Look (click to capture the mouse, Esc to release)</span></li>
+        <li><b>W A S D</b><span>Walk · hold Shift to run</span></li>
+        <li><b>E</b><span>Hold near a snare to cut it</span></li>
+        <li><b>Q</b><span>Tracker: bearing and distance to the nearest snare</span></li>
+        <li><b>F</b><span>Torch</span></li>
+      </ul>
+      <div id="status">Loading…</div>
+      <button id="go" type="button" disabled>Loading scans…</button>
+    </div>
+  </div>
+  <div id="overlay"><div id="overlayText"></div></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
+import { FullScreenQuad } from "three/addons/postprocessing/Pass.js";
+
+// Scene kit: the code between here and "Last Light" below is copied from index.html (the path traced
+// study) so both pages build the same Namaqualand scans, ground and sky.

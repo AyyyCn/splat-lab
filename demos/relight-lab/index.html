@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Splat Relight Lab</title>
+<style>
+  :root {
+    --bg: #0c0d0f;
+    --panel: rgba(16, 17, 20, 0.88);
+    --line: rgba(255, 255, 255, 0.09);
+    --text: #ebe8e2;
+    --muted: #9b978e;
+    --faint: #75716a;
+    --accent: #f0b54a;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  canvas { display: block; touch-action: none; }
+  #panel {
+    position: fixed; top: 12px; right: 12px; bottom: 12px; width: 300px;
+    overflow-y: auto; padding: 16px 16px 20px;
+    background: var(--panel);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border: 1px solid var(--line); border-radius: 12px;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 10px; }
+  #status { color: var(--accent); min-height: 1.45em; font-variant-numeric: tabular-nums; }
+  section { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+  h2 { font-size: 12px; font-weight: 600; margin: 0 0 8px; }
+  h2 small { font-weight: 400; color: var(--faint); margin-left: 4px; }
+  .row { display: grid; grid-template-columns: 84px 1fr 46px; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { color: var(--muted); }
+  .row output { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .check { display: flex; align-items: center; gap: 8px; margin: 7px 0; color: var(--muted); cursor: pointer; }
+  .check input { accent-color: var(--accent); margin: 0; }
+  select, button {
+    font: inherit; color: var(--text);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px;
+  }
+  select { width: 100%; margin-bottom: 4px; }
+  button { cursor: pointer; margin-top: 4px; }
+  button:hover, select:hover { background: rgba(255, 255, 255, 0.1); }
+  input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+  .hint { color: var(--faint); font-size: 12px; margin: 6px 0 0; }
+  details { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+  details ol { padding-left: 18px; margin: 8px 0 0; color: var(--muted); }
+  details li { margin: 6px 0; }
+  details b { color: var(--text); font-weight: 600; }
+  @media (max-width: 720px) {
+    #panel { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 46vh; }
+  }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1>Splat Relight Lab</h1>
+  <p class="sub">A captured Gaussian-splat room and a PBR mesh in one three.js scene.</p>
+  <div id="status">Loading…</div>
+
+  <section>
+    <h2>Object <small>PBR mesh, relightable</small></h2>
+    <select id="model" aria-label="Model"></select>
+    <div class="row"><label for="size">Size</label><input id="size" type="range" min="0.4" max="2" step="0.01" value="1"><output></output></div>
+    <div class="row"><label for="turn">Turn</label><input id="turn" type="range" min="0" max="360" step="1" value="15"><output></output></div>
+    <p class="hint">Click the floor to move it there.</p>
+  </section>
+
+  <section>
+    <h2>Lamp <small>a real light on the mesh</small></h2>
+    <div class="row"><label for="lampAngle">Angle</label><input id="lampAngle" type="range" min="0" max="360" step="1" value="297"><output></output></div>
+    <div class="row"><label for="lampHeight">Height</label><input id="lampHeight" type="range" min="0.05" max="2.5" step="0.01" value="0.45"><output></output></div>
+    <div class="row"><label for="lampDist">Distance</label><input id="lampDist" type="range" min="0.2" max="6" step="0.01" value="1.9"><output></output></div>
+    <div class="row"><label for="lampPower">Intensity</label><input id="lampPower" type="range" min="0" max="40" step="0.1" value="10"><output></output></div>
+    <div class="row"><label for="lampTemp">Color temp</label><input id="lampTemp" type="range" min="1800" max="9000" step="50" value="2000"><output></output></div>
+    <button id="matchFire" type="button">Put the lamp back in the fire</button>
+    <label class="check"><input id="orbitLamp" type="checkbox"> Orbit the lamp</label>
+    <label class="check"><input id="shadows" type="checkbox" checked> Mesh shadows</label>
+  </section>
+
+  <section>
+    <h2>Room <small>the splat, light baked in</small></h2>
+    <div class="row"><label for="roomBright">Brightness</label><input id="roomBright" type="range" min="0.2" max="1.6" step="0.01" value="1"><output></output></div>
+    <label class="check"><input id="fakeLight" type="checkbox"> Fake-light the room with the lamp</label>
+    <div class="row"><label for="glowStrength">Glow</label><input id="glowStrength" type="range" min="0" max="2.5" step="0.01" value="1.2"><output></output></div>
+    <div class="row"><label for="glowReach">Reach</label><input id="glowReach" type="range" min="0.2" max="4" step="0.01" value="2"><output></output></div>
+  </section>
+
+  <section>
+    <h2>Environment <small>reflections and fill light</small></h2>
+    <select id="envSource" aria-label="Environment source">
+      <option value="splat">Captured from the splat room</option>
+      <option value="studio">Studio HDRI (generic)</option>
+      <option value="none">None</option>
+    </select>
+    <div class="row"><label for="envPower">Intensity</label><input id="envPower" type="range" min="0" max="2" step="0.01" value="1"><output></output></div>
+    <button id="recapture" type="button">Recapture at the object</button>
+  </section>
+
+  <section>
+    <h2>Realism checks</h2>
+    <label class="check"><input id="probes" type="checkbox" checked> Chrome and grey reference balls</label>
+    <label class="check"><input id="catcher" type="checkbox" checked> Shadow catcher on the floor</label>
+    <label class="check"><input id="showRoom" type="checkbox" checked> Show the splat room</label>
+    <label class="check"><input id="showMarker" type="checkbox" checked> Show lamp marker</label>
+  </section>
+
+  <details open>
+    <summary>What to look for</summary>
+    <ol>
+      <li><b>Move the lamp.</b> The mesh's shading and shadow follow it. The room's own light stays put, because it's baked into the splat.</li>
+      <li><b>Turn on fake-lighting.</b> Splats near the lamp brighten. It's a colour edit, not light, so nothing blocks it: it glows through furniture.</li>
+      <li><b>Switch the environment.</b> "Captured from the splat room" makes the chrome ball reflect the actual room, and it's dark behind you because this splat is only half a room. "Studio" is brighter but looks pasted in.</li>
+      <li><b>Watch the shadow.</b> It lands only on the invisible floor plane, never on the walls or furniture.</li>
+    </ol>
+  </details>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/2.4.0/spark.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import {
+  SparkRenderer, SplatMesh, SplatEdit, SplatEditSdf, SplatEditSdfType, SplatEditRgbaBlendMode,
+} from "@sparkjsdev/spark";
+
+// ---------- Assets ----------
+const ROOM_URL = "https://sparkjs.dev/assets/splats/fireplace.spz";
+const MODELS = {
+  helmet: { label: "Damaged Helmet (metal, emissive)", url: "https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf", height: 0.5 },
+  chair:  { label: "Sheen Chair (fabric)", url: "https://threejs.org/examples/models/gltf/SheenChair.glb", height: 1.3 },
+  duck:   { label: "Rubber Duck (plastic)", url: "https://sparkjs.dev/assets/models/rubberduck.glb", height: 0.35 },
+};
+// Tuned for this room: the floor sits at y ≈ -0.72 and its armchair is ~1.45 units tall.
+// The object starts on the rug; the lamp starts where the fire is, so the lighting matches.
+const FLOOR_Y = -0.72;
+const FLOOR_PLANE = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_Y);
+const START_SPOT = new THREE.Vector3(-0.5, FLOOR_Y, 1.5);
+const START_CAM = new THREE.Vector3(-1.5, 0.15, 4.2);
+const START_TARGET = new THREE.Vector3(-0.15, -0.4, 1.1);
+
+// ---------- UI helpers ----------
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+const setStatus = (t) => { statusEl.textContent = t; };
+const f2 = (v) => v.toFixed(2);
+
+function bindRange(id, fmt, fn) {
+  const el = $(id);
+  const out = el.parentElement.querySelector("output");
+  const update = () => {
+    const v = parseFloat(el.value);
+    if (out) out.textContent = fmt(v);
+    fn(v);
+  };
+  el.addEventListener("input", update);
+  update();
+  return el;
+}
+function bindCheck(id, fn) {
+  const el = $(id);
+  el.addEventListener("change", () => fn(el.checked));
+  fn(el.checked);
+  return el;
+}
+
+// Approximate black-body colour (Tanner Helland's fit).
+function kelvinToColor(k, target = new THREE.Color()) {
+  const t = k / 100;
+  let r, g, b;
+  if (t <= 66) {
+    r = 255;
+    g = 99.4708025861 * Math.log(t) - 161.1195681661;
+    b = t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+  } else {
+    r = 329.698727446 * Math.pow(t - 60, -0.1332047592);
+    g = 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+    b = 255;
+  }
+  const c = (x) => THREE.MathUtils.clamp(x, 0, 255) / 255;
+  return target.setRGB(c(r), c(g), c(b), THREE.SRGBColorSpace);
+}
+
+// ---------- Renderer, scene, camera ----------
+const renderer = new THREE.WebGLRenderer({ antialias: false }); // Spark recommends no MSAA
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x0c0d0f, 1);
+renderer.toneMapping = THREE.NeutralToneMapping; // affects meshes only; splat colours pass through
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 200);
+camera.position.copy(START_CAM);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.copy(START_TARGET);
+
+// Shift the view's centre so the orbit target sits in the middle of the area the
+// panel doesn't cover: left of a side panel, or above the bottom sheet on phones.
+function fitView() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.fov = w < h ? 70 : 55;
+  if (w > 720) {
+    camera.setViewOffset(w + 312, h, 312, 0, w, h);
+  } else {
+    const sheet = Math.round(h * 0.46);
+    camera.setViewOffset(w, h + sheet, 0, sheet, w, h);
+  }
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener("resize", fitView);
+
+// ---------- The splat room ----------
+const spark = new SparkRenderer({ renderer });
+scene.add(spark);
+
+const room = new SplatMesh({
+  url: ROOM_URL,
+  raycastable: true,
+  onProgress: (e) => {
+    if (e.total) setStatus(`Loading splat room… ${Math.round((e.loaded / e.total) * 100)}%`);
+  },
+});
+room.quaternion.set(1, 0, 0, 0); // splat files are usually stored y-down
+scene.add(room);
+
+// Fake "lamp light" on the splat: an additive colour edit around the lamp.
+const lampGlow = new SplatEdit({ rgbaBlendMode: SplatEditRgbaBlendMode.ADD_RGBA, sdfSmooth: 0.1, softEdge: 1.2 });
+const lampSdf = new SplatEditSdf({ type: SplatEditSdfType.SPHERE, color: new THREE.Color(0, 0, 0), radius: 0.3, opacity: 0 });
+lampGlow.add(lampSdf);
+scene.add(lampGlow);
+
+// ---------- The object rig: anchor on the floor holds model, probes, shadow catcher ----------
+const anchor = new THREE.Group();
+anchor.position.copy(START_SPOT);
+scene.add(anchor);
+
+const modelHolder = new THREE.Group();
+anchor.add(modelHolder);
+
+// Shadow catcher: invisible except where shadows land, fading out towards its rim
+// so long shadows don't end in a hard circular edge.
+const catcherMat = new THREE.ShadowMaterial({ opacity: 0.55 });
+catcherMat.onBeforeCompile = (shader) => {
+  shader.vertexShader = shader.vertexShader
+    .replace("#include <common>", "#include <common>\nvarying float vRim;")
+    .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRim = length(position.xy);");
+  shader.fragmentShader = shader.fragmentShader
+    .replace("#include <common>", "#include <common>\nvarying float vRim;")
+    .replace("opacity * ( 1.0 - getShadowMask() )", "opacity * ( 1.0 - getShadowMask() ) * ( 1.0 - smoothstep( 0.35, 1.0, vRim ) )");
+};
+const catcher = new THREE.Mesh(new THREE.CircleGeometry(1, 64), catcherMat);
+catcher.rotation.x = -Math.PI / 2;
+catcher.position.y = 0.002;
+catcher.receiveShadow = true;
+anchor.add(catcher);
+
+const probes = new THREE.Group();
+anchor.add(probes);
+const ballGeo = new THREE.SphereGeometry(1, 64, 32);
+const chromeBall = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.03 }));
+const greyBall = new THREE.Mesh(ballGeo, new THREE.MeshStandardMaterial({ color: new THREE.Color().setRGB(0.18, 0.18, 0.18), metalness: 0, roughness: 0.9 })); // 18% grey, linear
+for (const b of [chromeBall, greyBall]) { b.castShadow = true; b.receiveShadow = true; probes.add(b); }
+
+// ---------- The lamp: a real point light for meshes ----------
+const lamp = new THREE.PointLight(0xffffff, 6, 0, 2);
+lamp.castShadow = true;
+lamp.shadow.mapSize.set(1024, 1024);
+lamp.shadow.camera.near = 0.01;
+lamp.shadow.camera.far = 30;
+lamp.shadow.bias = -0.002;
+lamp.shadow.radius = 3;
+scene.add(lamp);
+const lampMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.025, 20, 12),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
+);
+lamp.add(lampMarker);
+
+// ---------- State ----------
+const params = {
+  model: "helmet", size: 1, turn: 15,
+  lampAngle: 297, lampHeight: 0.45, lampDist: 1.9, lampPower: 10, lampTemp: 2000,
+  orbitLamp: false, roomBright: 1, fakeLight: false, glowStrength: 1.2, glowReach: 2,
+  envSource: "splat", envPower: 1,
+};
+let roomReady = false;
+const lampColor = new THREE.Color();
+
+const objectHeight = () => MODELS[params.model].height * params.size;
+
+function layoutRig() {
+  const h = objectHeight();
+  modelHolder.scale.setScalar(h);
+  modelHolder.rotation.y = THREE.MathUtils.degToRad(params.turn);
+  const r = Math.max(0.025, h * 0.11);
+  chromeBall.scale.setScalar(r);
+  greyBall.scale.setScalar(r);
+  chromeBall.position.set(h * 0.7 + r, r, h * 0.35);
+  greyBall.position.set(h * 0.7 + r * 3.4, r, h * 0.35);
+  catcher.scale.setScalar(Math.max(h * 4, 1));
+}
+
+function updateLamp() {
+  const a = THREE.MathUtils.degToRad(params.lampAngle);
+  lamp.position.set(
+    anchor.position.x + Math.cos(a) * params.lampDist,
+    anchor.position.y + params.lampHeight,
+    anchor.position.z + Math.sin(a) * params.lampDist,
+  );
+  kelvinToColor(params.lampTemp, lampColor);
+  lamp.color.copy(lampColor);
+  lamp.intensity = params.lampPower;
+  lampMarker.material.color.copy(lampColor);
+
+  lampSdf.position.copy(lamp.position);
+  lampSdf.radius = params.glowReach * 0.25;
+  lampGlow.softEdge = params.glowReach;
+  // The edit stays in the scene and is zeroed when off: adding or removing an edit
+  // makes Spark rebuild its shader, which blanks the room for a moment.
+  const glow = params.fakeLight ? params.glowStrength * (params.lampPower / 8) : 0;
+  lampSdf.color.copy(lampColor).multiplyScalar(glow);
+}
+
+// ---------- Environment ----------
+const pmrem = new THREE.PMREMGenerator(renderer);
+const studioEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const offline = new SparkRenderer({ renderer }); // separate renderer for cube-map capture
+let splatEnv = null;
+let capturing = false;
+let captureAgain = false;
+
+function applyEnv() {
+  const src = params.envSource;
+  scene.environment = src === "splat" ? splatEnv : src === "studio" ? studioEnv : null;
+  // The captured room dims along with the room, the generic studio does not.
+  scene.environmentIntensity = params.envPower * (src === "splat" ? params.roomBright : 1);
+}
+
+async function captureEnv() {
+  if (!roomReady) return;
+  if (capturing) { captureAgain = true; return; }
+  capturing = true;
+  try {
+    const center = anchor.position.clone();
+    center.y += objectHeight() * 0.5;
+    const tex = await offline.renderEnvMap({
+      scene, worldCenter: center, near: 0.01, far: 100,
+      hideObjects: [anchor, lampMarker], // capture the room, not our own object
+    });
+    const old = splatEnv;
+    splatEnv = tex;
+    applyEnv();
+    if (old) old.dispose();
+  } catch (err) {
+    console.error(err);
+    setStatus("Environment capture failed (see console)");
+  } finally {
+    capturing = false;
+    if (captureAgain) { captureAgain = false; captureEnv(); }
+  }
+}
+let captureTimer = 0;
+const scheduleCapture = () => { clearTimeout(captureTimer); captureTimer = setTimeout(captureEnv, 120); };
+
+// ---------- Models ----------
+const loader = new GLTFLoader();
+const modelCache = new Map();
+
+async function loadModel(key) {
+  if (modelCache.has(key)) return modelCache.get(key);
+  const gltf = await loader.loadAsync(MODELS[key].url);
+  const obj = gltf.scene;
+  obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  // Normalise to height 1, sitting on y = 0, centred in x/z.
+  let box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  obj.scale.multiplyScalar(1 / size.y);
+  box = new THREE.Box3().setFromObject(obj);
+  const c = box.getCenter(new THREE.Vector3());
+  obj.position.sub(new THREE.Vector3(c.x, box.min.y, c.z));
+  const wrap = new THREE.Group();
+  wrap.add(obj);
+  modelCache.set(key, wrap);
+  return wrap;
+}
+
+// Keep the viewing direction, but back the camera off to fit the object's height.
+function frameObject() {
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  camera.position.copy(controls.target).addScaledVector(dir, 2.4 + objectHeight() * 2);
+}
+
+async function showModel(key) {
+  params.model = key;
+  setStatus(`Loading ${MODELS[key].label.split(" (")[0]}…`);
+  try {
+    const m = await loadModel(key);
+    if (params.model !== key) return; // user switched again meanwhile
+    modelHolder.clear();
+    modelHolder.add(m);
+    layoutRig();
+    frameObject();
+    updateLamp();
+    scheduleCapture();
+    setStatus(roomReady ? "Ready. Click the floor to move the object." : "Loading splat room…");
+  } catch (err) {
+    console.error(err);
+    setStatus(`Couldn't load ${MODELS[key].label}`);
+  }
+}
+
+// ---------- Click to place (raycast against the splat) ----------
+const raycaster = new THREE.Raycaster();
+let downAt = null;
+renderer.domElement.addEventListener("pointerdown", (e) => { downAt = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!downAt || !roomReady || !room.visible) return;
+  const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
+  downAt = null;
+  if (moved > 5) return; // that was an orbit drag
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  raycaster.setFromCamera(ndc, camera);
+  // Spark raycasts against a reduced set of splats, so thin areas can miss.
+  // Fall back to the room's known floor height.
+  const hit = raycaster.intersectObject(room, false)[0];
+  const point = hit ? hit.point : raycaster.ray.intersectPlane(FLOOR_PLANE, new THREE.Vector3());
+  if (point && camera.position.distanceTo(point) < 15) placeAt(point);
+});
+
+function placeAt(point) {
+  const lampWorld = lamp.position.clone(); // the lamp stays where it is in the room
+  const delta = point.clone().sub(anchor.position);
+  anchor.position.copy(point);
+  camera.position.add(delta);
+  controls.target.add(delta);
+  if (params.orbitLamp) updateLamp();
+  else aimLampAt(lampWorld);
+  scheduleCapture();
+}
+
+// ---------- Bind UI ----------
+const modelSelect = $("model");
+for (const [key, def] of Object.entries(MODELS)) {
+  const opt = document.createElement("option");
+  opt.value = key;
+  opt.textContent = def.label;
+  modelSelect.appendChild(opt);
+}
+modelSelect.addEventListener("change", () => showModel(modelSelect.value));
+
+bindRange("size", (v) => `${f2(v)}×`, (v) => { params.size = v; layoutRig(); scheduleCapture(); });
+bindRange("turn", (v) => `${v}°`, (v) => { params.turn = v; layoutRig(); });
+const angleInput = bindRange("lampAngle", (v) => `${Math.round(v)}°`, (v) => { params.lampAngle = v; updateLamp(); });
+bindRange("lampHeight", f2, (v) => { params.lampHeight = v; updateLamp(); });
+bindRange("lampDist", f2, (v) => { params.lampDist = v; updateLamp(); });
+bindRange("lampPower", (v) => v.toFixed(1), (v) => { params.lampPower = v; updateLamp(); });
+bindRange("lampTemp", (v) => `${Math.round(v)}K`, (v) => { params.lampTemp = v; updateLamp(); });
+bindCheck("orbitLamp", (v) => { params.orbitLamp = v; });
+bindCheck("shadows", (v) => { lamp.castShadow = v; catcher.visible = v && $("catcher").checked; });
+
+bindRange("roomBright", f2, (v) => { params.roomBright = v; room.recolor.setRGB(v, v, v); applyEnv(); });
+bindCheck("fakeLight", (v) => { params.fakeLight = v; updateLamp(); });
+bindRange("glowStrength", f2, (v) => { params.glowStrength = v; updateLamp(); });
+bindRange("glowReach", f2, (v) => { params.glowReach = v; updateLamp(); });
+
+// The fire in this room sits about here; lighting from this point matches what's baked in.
+const FIRE = new THREE.Vector3(0.45, -0.25, -0.5);
+function setSlider(id, v) {
+  const el = $(id);
+  el.value = v;
+  el.dispatchEvent(new Event("input"));
+}
+// The lamp sliders are relative to the object; this re-aims them at a world position.
+function aimLampAt(worldPos) {
+  const d = worldPos.clone().sub(anchor.position);
+  setSlider("lampAngle", (THREE.MathUtils.radToDeg(Math.atan2(d.z, d.x)) + 360) % 360);
+  setSlider("lampDist", THREE.MathUtils.clamp(Math.hypot(d.x, d.z), 0.2, 6));
+  setSlider("lampHeight", THREE.MathUtils.clamp(d.y, 0.05, 2.5));
+}
+function matchFire() {
+  aimLampAt(FIRE);
+  setSlider("lampTemp", 2000);
+  $("orbitLamp").checked = false;
+  params.orbitLamp = false;
+}
+$("matchFire").addEventListener("click", matchFire);
+
+$("envSource").addEventListener("change", (e) => { params.envSource = e.target.value; applyEnv(); });
+bindRange("envPower", f2, (v) => { params.envPower = v; applyEnv(); });
+$("recapture").addEventListener("click", () => captureEnv());
+
+bindCheck("probes", (v) => { probes.visible = v; });
+bindCheck("catcher", (v) => { catcher.visible = v && lamp.castShadow; });
+bindCheck("showRoom", (v) => { room.visible = v; });
+bindCheck("showMarker", (v) => { lampMarker.visible = v; });
+
+// ---------- Start ----------
+fitView();
+layoutRig();
+matchFire();
+applyEnv();
+showModel(params.model);
+
+room.initialized.then(() => {
+  roomReady = true;
+  setStatus("Ready. Click the floor to move the object.");
+  captureEnv();
+}).catch((err) => {
+  console.error(err);
+  setStatus("Couldn't load the splat room");
+});
+
+// ---------- Loop ----------
+let last = performance.now();
+renderer.setAnimationLoop((now) => {
+  const dt = Math.min((now - last) / 1000, 0.1);
+  last = now;
+  if (params.orbitLamp) {
+    params.lampAngle = (params.lampAngle + dt * 40) % 360;
+    angleInput.value = params.lampAngle;
+    angleInput.parentElement.querySelector("output").textContent = `${Math.round(params.lampAngle)}°`;
+    updateLamp();
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+// Handy for poking at the scene from the console.
+window.lab = { THREE, renderer, spark, scene, camera, controls, room, anchor, lamp, lampGlow, lampSdf, params, placeAt, captureEnv };
+</script>
+</body>
+</html>

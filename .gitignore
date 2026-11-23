@@ -1,0 +1,9 @@
+# scene files are downloaded locally and mostly can't be redistributed (see scenes/README.md)
+scenes/*
+!scenes/README.md
+
+# never commit screenshots of non-redistributable scenes
+docs/images/private-*/
+
+.DS_Store
+node_modules/

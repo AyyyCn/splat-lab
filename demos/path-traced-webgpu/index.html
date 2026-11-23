@@ -1,0 +1,1067 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Namaqualand WebGPU Tracer</title>
+<style>
+  :root {
+    --bg: #0b0b0c;
+    --panel: #131211;
+    --line: rgba(255, 255, 255, 0.09);
+    --text: #ece8e1;
+    --muted: #a29d93;
+    --faint: #78736b;
+    --accent: #e9a24a;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  #view { position: fixed; left: 0; top: 0; bottom: 0; right: 324px; background: #000; }
+  #view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  #overlay[hidden] { display: none; }
+  #overlay div { background: rgba(0, 0, 0, 0.6); padding: 10px 14px; border-radius: 8px; max-width: 360px; text-align: center; }
+  #hud {
+    position: absolute; left: 12px; bottom: 10px; font-size: 12px; pointer-events: none;
+    color: rgba(255, 255, 255, 0.85); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+    font-variant-numeric: tabular-nums;
+  }
+  #focusDot {
+    position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; pointer-events: none;
+    border: 1.5px solid rgba(255, 255, 255, 0.9); border-radius: 50%; opacity: 0; transition: opacity 0.8s;
+  }
+  #panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 324px; overflow-y: auto;
+    padding: 16px 16px 24px; background: var(--panel); border-left: 1px solid var(--line);
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 10px; }
+  #status { color: var(--accent); min-height: 1.45em; font-variant-numeric: tabular-nums; }
+  section { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+  h2 { font-size: 12px; font-weight: 600; margin: 0 0 8px; }
+  h2 small { font-weight: 400; color: var(--faint); margin-left: 4px; }
+  .row { display: grid; grid-template-columns: 78px 1fr 54px; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { color: var(--muted); }
+  .row output { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .check { display: flex; align-items: center; gap: 8px; margin: 7px 0; color: var(--muted); cursor: pointer; }
+  .check input { accent-color: var(--accent); margin: 0; }
+  select, button {
+    font: inherit; color: var(--text);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px;
+  }
+  select { width: 100%; margin-bottom: 4px; }
+  button { cursor: pointer; }
+  button:hover, select:hover { background: rgba(255, 255, 255, 0.1); }
+  input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 8px; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg label {
+    text-align: center; padding: 5px 8px; cursor: pointer; color: var(--muted);
+    border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03);
+  }
+  .seg label:first-of-type { border-radius: 7px 0 0 7px; }
+  .seg label:last-of-type { border-radius: 0 7px 7px 0; border-left: 0; }
+  .seg input:checked + label { color: var(--text); background: rgba(233, 162, 74, 0.18); border-color: rgba(233, 162, 74, 0.45); }
+  .seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .views { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+  #compare { width: 100%; user-select: none; -webkit-user-select: none; margin-bottom: 4px; }
+  #compare.held { background: rgba(233, 162, 74, 0.22); }
+  .hint { color: var(--faint); font-size: 12px; margin: 6px 0 0; }
+  details { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+  details ol { padding-left: 18px; margin: 8px 0 0; color: var(--muted); }
+  details li { margin: 6px 0; }
+  details b { color: var(--text); font-weight: 600; }
+  .stats { color: var(--faint); font-size: 12px; margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .stats a { color: var(--muted); }
+  @media (max-width: 720px) {
+    #view { right: 0; bottom: 46vh; }
+    #panel { top: auto; left: 0; width: auto; height: 46vh; border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div id="view">
+  <canvas id="c"></canvas>
+  <div id="focusDot"></div>
+  <div id="hud"></div>
+  <div id="overlay"><div id="overlayText">Loading…</div></div>
+</div>
+
+<aside id="panel">
+  <h1>Namaqualand, WebGPU + denoiser</h1>
+  <p class="sub">The same photoscanned scene as the <a href="../path-traced/" style="color: var(--muted)">WebGL page</a>, path traced with WebGPU compute and cleaned up by Open Image Denoise once a few samples are in.</p>
+  <div id="status">Loading…</div>
+
+  <section>
+    <h2>Render <small>trace a few samples, then denoise</small></h2>
+    <select id="denoiser" aria-label="Denoiser">
+      <option value="small">Denoiser: OIDN small network (0.6 MB)</option>
+      <option value="standard">Denoiser: OIDN standard network (1.8 MB)</option>
+      <option value="off">No denoiser, raw samples only</option>
+    </select>
+    <div class="row"><label for="maxSamples">Samples</label><input id="maxSamples" type="range" min="0" max="7" step="1" value="3"><output></output></div>
+    <button id="compare" type="button">Hold to see raw samples (or hold C)</button>
+    <div class="row"><label for="res">Resolution</label><input id="res" type="range" min="0" max="2" step="1" value="1"><output></output></div>
+    <div class="row"><label for="bounces">Bounces</label><input id="bounces" type="range" min="1" max="10" step="1" value="5"><output></output></div>
+    <p class="hint">Tracing stops at this many samples per pixel; then the denoiser runs once.</p>
+  </section>
+
+  <section>
+    <h2>Sky <small>real HDR photos, same valley</small></h2>
+    <select id="sky" aria-label="Sky"></select>
+    <div class="row"><label for="sunAngle">Sun angle</label><input id="sunAngle" type="range" min="-180" max="180" step="1" value="40"><output></output></div>
+    <div class="row"><label for="ev">Exposure</label><input id="ev" type="range" min="-3" max="3" step="0.1" value="-0.3"><output></output></div>
+    <select id="tone" aria-label="Tone mapping">
+      <option value="0">AgX tone mapping (film-like)</option>
+      <option value="1">Neutral tone mapping</option>
+      <option value="2">ACES tone mapping</option>
+    </select>
+  </section>
+
+  <section>
+    <h2>Camera <small>physical lens</small></h2>
+    <div class="row"><label for="lens">Lens</label><input id="lens" type="range" min="0" max="9" step="1" value="4"><output></output></div>
+    <div class="row"><label for="fstop">Aperture</label><input id="fstop" type="range" min="0" max="9" step="1" value="4"><output></output></div>
+    <div class="row"><label for="focus">Focus</label><input id="focus" type="range" min="0" max="1" step="0.001" value="0.5"><output></output></div>
+    <p class="hint">Click anything in the scene to focus on it.</p>
+    <div class="views">
+      <button type="button" data-view="eye">Eye level</button>
+      <button type="button" data-view="sun">Into the sun</button>
+      <button type="button" data-view="low">Ground level</button>
+      <button type="button" data-view="wide">Wide</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Camera look <small>what a real sensor adds</small></h2>
+    <div class="row"><label for="bloom">Glare</label><input id="bloom" type="range" min="0" max="1" step="0.01" value="0.15"><output></output></div>
+    <div class="row"><label for="vignette">Vignette</label><input id="vignette" type="range" min="0" max="1" step="0.01" value="0.55"><output></output></div>
+    <label class="check"><input id="ca" type="checkbox" checked> Lens colour fringing</label>
+    <p class="hint">No film grain here: it would hide what the denoiser is doing.</p>
+  </section>
+
+  <details open>
+    <summary>What to look for</summary>
+    <ol>
+      <li><b>Watch a reset.</b> Move the camera: a blurry low-res preview, a second of grainy samples, then the denoiser swaps in a clean frame. Hold C to see the raw samples it started from.</li>
+      <li><b>Drop the samples to 4 or 8.</b> Still clean at a glance, but thin twigs, petals and the gravel texture smear first: the denoiser invents detail it never saw. At 64+ it has less to invent.</li>
+      <li><b>Try the standard network.</b> Three times the weights; a little sharper on fine texture, slower per pass.</li>
+      <li><b>Open the <a href="../path-traced/" style="color: var(--muted)">WebGL page</a> at the same view.</b> Without a denoiser it is still grainy in the shadows after 230 samples (about 40 s), where this page is clean after 32 (about 3 s).</li>
+    </ol>
+  </details>
+
+  <div class="stats" id="stats">Models, textures and skies: <a href="https://polyhaven.com" target="_blank" rel="noopener">Poly Haven</a> (CC0), all from Namaqualand, South Africa. Renderer: three-gpu-pathtracer 0.0.27 (WebGPUPathTracer) on three.js 0.186 WebGPU, denoiser: oidn-web 0.4 with Intel Open Image Denoise 2.3 weights.</div>
+</aside>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+    "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/",
+    "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/src/index.js",
+    "three-mesh-bvh/webgpu": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/src/webgpu/index.js",
+    "three-gpu-pathtracer/": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.27/",
+    "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.4.0/dist/oidn.js"
+  }
+}
+</script>
+<script type="module">
+// "three" points at the WebGPU build so the addons, three-mesh-bvh and the path tracer all share one copy.
+import * as THREE from "three";
+import { texture, uniform, vec3, vec4, uv, dot, mix, min, float } from "three/tsl";
+import { bloom } from "three/addons/tsl/display/BloomNode.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
+import { acceleratedRaycast } from "three-mesh-bvh";
+// Imported file by file: the package's webgpu index also pulls in the FSR upscaler and its dependency.
+import { WebGPUPathTracer } from "three-gpu-pathtracer/src/webgpu/WebGPUPathTracer.js";
+import { OIDNDenoiser } from "three-gpu-pathtracer/src/webgpu/denoise/OIDNDenoiser.js";
+import "three-gpu-pathtracer/src/webgpu/shims/PhysicalCameraShim.js";
+import { PhysicalCamera } from "three-gpu-pathtracer/src/objects/PhysicalCamera.js";
+import { initUNetFromURL } from "oidn-web";
+
+// ------------------------------------------------------------------ assets
+const PH = "https://dl.polyhaven.org/file/ph-assets";
+// Poly Haven keeps one geometry .bin per model, in the folder of its highest texture resolution.
+const BIN_RES = {
+  quiver_tree_01: "8k", quiver_tree_02: "8k", namaqualand_boulder_02: "8k", namaqualand_boulder_03: "8k",
+  namaqualand_boulder_04: "8k", namaqualand_boulder_05: "8k", namaqualand_boulder_06: "8k",
+  namaqualand_boulders_01: "8k", namaqualand_rocks_01: "8k", namaqualand_stones_01: "8k",
+  namaqualand_cliff_01: "8k", othonna_cerarioides: "8k", wild_rooibos_bush: "8k", crystalline_iceplant: "8k",
+  cheiridopsis_succulent: "8k", flower_gazania: "8k", flower_ursinia: "4k", flower_empodium: "4k",
+};
+// Poly Haven's glTFs point cut-out leaves and petals at JPG colour maps, which have no alpha channel.
+// The cut-out ships as a separate greyscale map, so these sets get it attached by hand.
+const ALPHA_SETS = ["wild_rooibos_bush", "othonna_cerarioides", "flower_ursinia", "flower_empodium", "cheiridopsis_succulent", "crystalline_iceplant", "flower_gazania"];
+const alphaURL = (id) => `${PH}/Models/jpg/1k/${id}/${id}_alpha_1k.jpg`;
+const SKIES = {
+  rogland_sunset: "Sunset, clear sky",
+  klippad_sunrise_2: "Sunrise, broken cloud",
+  rogland_overcast: "Overcast",
+  goegap: "Midday sun",
+};
+const GROUND_TILE = 2.0; // metres covered by one tile of the rocky_trail scan
+const SOIL = new THREE.Color(0.33, 0.2, 0.11); // target average albedo (linear): the orange-tan granite grit in these photos
+const texURL = (id, map) => `${PH}/Textures/jpg/1k/${id}/${id}_${map}_1k.jpg`;
+const skyURL = (id) => `${PH}/HDRIs/hdr/2k/${id}_2k.hdr`;
+const modelURL = (id) => `${PH}/Models/gltf/1k/${id}/${id}_1k.gltf`;
+
+const LENSES = [14, 18, 24, 28, 35, 50, 70, 85, 105, 135];
+const FSTOPS = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22, 0]; // 0 = pinhole, no depth of field
+const RES = [0.5, 1, 2]; // path tracer pixels per CSS pixel
+const RES_LABEL = ["Half", "1×", "Retina"];
+const TAU = Math.PI * 2;
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+// Open Image Denoise weights for the guided HDR filter (beauty + albedo + normal). The 2.3.0-1 npm
+// release carries the real files; 2.3.0 shipped Git LFS pointers.
+const OIDN_WEIGHTS = {
+  small: "https://cdn.jsdelivr.net/npm/oidn-weights@2.3.0-1/rt_hdr_alb_nrm_small.tza",
+  standard: "https://cdn.jsdelivr.net/npm/oidn-weights@2.3.0-1/rt_hdr_alb_nrm.tza",
+};
+const SAMPLE_STOPS = [4, 8, 16, 32, 64, 128, 256, 1024];
+const TONES = [THREE.AgXToneMapping, THREE.NeutralToneMapping, THREE.ACESFilmicToneMapping];
+
+const state = {
+  compare: false, sky: "rogland_sunset", sunAngle: 40, ev: -0.3, tone: 0,
+  lens: 35, fstop: 5.6, focus: 7.5, bloom: 0.15, vignette: 0.55, ca: true,
+  maxSamples: 32, denoiser: "small", bounces: 5, res: 1,
+};
+
+// ------------------------------------------------------------------ helpers
+const $ = (id) => document.getElementById(id);
+const smoothstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+function mulberry32(a) {
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+let rand = mulberry32(7);
+function hash2(ix, iz, seed) {
+  let h = Math.imul(ix | 0, 374761393) ^ Math.imul(iz | 0, 668265263) ^ Math.imul(seed | 0, 1442695041);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise(x, z, seed) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x - ix, fz = z - iz;
+  const ux = fx * fx * (3 - 2 * fx), uz = fz * fz * (3 - 2 * fz);
+  const a = hash2(ix, iz, seed), b = hash2(ix + 1, iz, seed), c = hash2(ix, iz + 1, seed), d = hash2(ix + 1, iz + 1, seed);
+  return (a + (b - a) * ux + (c - a) * uz + (a - b - c + d) * ux * uz) * 2 - 1;
+}
+function fbm(x, z, oct, seed) {
+  let s = 0, amp = 0.5, f = 1, n = 0;
+  for (let i = 0; i < oct; i++) { s += amp * vnoise(x * f, z * f, seed + i * 17); n += amp; amp *= 0.5; f *= 2.03; }
+  return s / n;
+}
+// waits for a paint so status text shows, but doesn't hang in a background tab where frames stop
+const nextFrame = () => new Promise((r) => { let done = false; const go = () => { if (!done) { done = true; r(); } }; requestAnimationFrame(go); setTimeout(go, 120); });
+const fmtM = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : Math.round(n / 1e3) + "k");
+function setStatus(t) { $("status").textContent = t; }
+function overlay(t) { $("overlay").hidden = !t; if (t) $("overlayText").textContent = t; }
+
+// ------------------------------------------------------------------ renderer, scene, camera
+const view = $("view");
+const canvas = $("c");
+// WebGPURenderer quietly falls back to WebGL 2 without WebGPU; main() checks which backend it got.
+const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.AgXToneMapping; // applied by the render pipeline's output transform
+let maxAniso = 8;
+
+const scene = new THREE.Scene();
+const world = new THREE.Group();
+scene.add(world);
+
+const camera = new PhysicalCamera(40, 1, 0.05, 4000);
+camera.filmGauge = 36; // full-frame width, so lens numbers mean what they do on a real camera
+camera.apertureBlades = 6;
+camera.apertureRotation = 0.3;
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.minDistance = 0.3;
+controls.maxDistance = 90;
+controls.maxPolarAngle = Math.PI * 0.56;
+
+// ------------------------------------------------------------------ terrain
+// Two ground scans: a 2.5 m gravel tile up close, and a 20 m aerial scan (stones and patchiness baked in)
+// further out. The close one fades out over the far one; the far one fades into the sky photo's own ground.
+const TERRAIN = { N: 512, disp: 0.07, nearEnd: 12, nearFade: 8, farStart: 7.5, farFade: 30, R: 72 };
+const FAR_TILE = 20;
+let dispImg = null;
+let H0 = 0;
+function dispAt(u, v) {
+  const { data, w, h } = dispImg;
+  const x = (u - Math.floor(u)) * w - 0.5;
+  const y = (1 - (v - Math.floor(v))) * h - 0.5; // three flips textures, so v=1 is the image's top row
+  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+  const px = (xx, yy) => data[((((yy % h) + h) % h) * w + (((xx % w) + w) % w)) * 4] / 255;
+  const a = px(x0, y0), b = px(x0 + 1, y0), c = px(x0, y0 + 1), d = px(x0 + 1, y0 + 1);
+  return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+}
+function rawHeight(x, z) {
+  let h = fbm(x * 0.045, z * 0.045, 4, 3) * 1.5 + fbm(x * 0.17, z * 0.17, 3, 11) * 0.28;
+  // a slight rise beyond the hero tree; kept low so the fade into the photo is a thin band near the horizon
+  const rise = smoothstep(6, 32, -z) * smoothstep(54, 24, Math.abs(x));
+  h += rise * (0.35 + 0.35 * fbm(x * 0.05, z * 0.05 + 9.1, 3, 23));
+  return h;
+}
+const macroHeight = (x, z) => rawHeight(x, z) - H0;
+const dispAmp = (r) => TERRAIN.disp * (1 - smoothstep(5, 10, r));
+function tiledUV(x, z, tile, angle) {
+  const c = Math.cos(angle), s = Math.sin(angle); // rotate the tiling so it doesn't line up with the view
+  return [(x * c - z * s) / tile, (x * s + z * c) / tile];
+}
+const groundUV = (x, z) => tiledUV(x, z, GROUND_TILE, 0.4);
+function heightAt(x, z) {
+  const [u, v] = groundUV(x, z);
+  return macroHeight(x, z) + dispAmp(Math.hypot(x, z)) * (dispAt(u, v) - 0.5);
+}
+function normalAt(x, z) {
+  const e = 0.3;
+  const hx = macroHeight(x + e, z) - macroHeight(x - e, z);
+  const hz = macroHeight(x, z + e) - macroHeight(x, z - e);
+  return new THREE.Vector3(-hx, 2 * e, -hz).normalize();
+}
+
+// A polar grid centred on the default camera: vertex spacing grows with distance,
+// so the mesh is about equally dense on screen near and far.
+function groundMesh({ r0, R, fan, tile, angle, displace, offset, alpha, tex, tint }) {
+  const N = TERRAIN.N, k = 1 + TAU / N;
+  const rings = [];
+  for (let r = r0; r < R; r *= k) rings.push(r);
+  rings.push(R);
+  const M = rings.length, base = fan ? 1 : 0;
+  const count = base + M * N;
+  const pos = new Float32Array(count * 3), uv = new Float32Array(count * 2), col = new Float32Array(count * 4);
+  const setV = (i, x, z) => {
+    const r = Math.hypot(x, z);
+    const [u, v] = tiledUV(x, z, tile, angle);
+    let y = macroHeight(x, z) + (offset ? offset(r) : 0);
+    if (displace) { const [gu, gv] = groundUV(x, z); y += dispAmp(r) * (dispAt(gu, gv) - 0.5); }
+    pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+    uv[i * 2] = u; uv[i * 2 + 1] = v;
+    // slow brightness and warmth drift breaks up the tiling
+    const b = Math.min(1.25, Math.max(0.6, 1 + 0.26 * fbm(x * 0.18 + 3.1, z * 0.18 - 7.7, 3, 41) + 0.1 * fbm(x * 0.9, z * 0.9, 2, 57)));
+    const warm = 0.08 * fbm(x * 0.08, z * 0.08, 2, 77);
+    col[i * 4] = b * (1 + warm); col[i * 4 + 1] = b; col[i * 4 + 2] = b * (1 - warm);
+    col[i * 4 + 3] = alpha(r);
+  };
+  if (fan) setV(0, 0, 0);
+  for (let i = 0; i < M; i++) {
+    const off = (i % 2) * (Math.PI / N);
+    for (let j = 0; j < N; j++) {
+      const a = (j / N) * TAU + off;
+      setV(base + i * N + j, rings[i] * Math.cos(a), rings[i] * Math.sin(a));
+    }
+  }
+  const index = new Uint32Array(((fan ? N : 0) + 2 * N * (M - 1)) * 3);
+  let t = 0;
+  if (fan) for (let j = 0; j < N; j++) { index[t++] = 0; index[t++] = 1 + ((j + 1) % N); index[t++] = 1 + j; }
+  for (let i = 0; i < M - 1; i++) {
+    for (let j = 0; j < N; j++) {
+      const a = base + i * N + j, b = base + i * N + ((j + 1) % N), c = base + (i + 1) * N + j, d = base + (i + 1) * N + ((j + 1) % N);
+      index[t++] = a; index[t++] = b; index[t++] = c;
+      index[t++] = b; index[t++] = d; index[t++] = c;
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 4));
+  geo.setIndex(new THREE.BufferAttribute(index, 1));
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({
+    map: tex.diff, normalMap: tex.nor, roughnessMap: tex.arm, aoMap: tex.arm,
+    roughness: 1, metalness: 0, vertexColors: true, transparent: true,
+  });
+  mat.color.copy(tint);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = "ground";
+  mesh.receiveShadow = true;
+  mesh.castShadow = true;
+  return mesh;
+}
+
+function buildGround(tex) {
+  H0 = rawHeight(0, 0);
+  const T = TERRAIN;
+  // tint each scan so its average colour lands on the same soil colour: the blend between them disappears,
+  // and both match the warm granite grit in these sky photos
+  const tintFor = (avg) => new THREE.Color(SOIL.r / avg.r, SOIL.g / avg.g, SOIL.b / avg.b);
+  const nearTint = tintFor(tex.near.avg), farTint = tintFor(tex.far.avg);
+  const near = groundMesh({
+    r0: 0.3, R: T.nearEnd, fan: true, tile: GROUND_TILE, angle: 0.4, displace: true, tex: tex.near, tint: nearTint,
+    alpha: (r) => 1 - smoothstep(T.nearFade, T.nearEnd * 0.98, r),
+  });
+  const far = groundMesh({
+    r0: T.farStart, R: T.R, fan: false, tile: FAR_TILE, angle: -0.7, displace: false, tex: tex.far, tint: farTint,
+    offset: (r) => -0.03 * (1 - smoothstep(T.nearEnd - 1, T.nearEnd + 0.5, r)), // tucked just under the near scan where they overlap
+    alpha: (r) => 1 - smoothstep(T.farFade, T.R * 0.97, r),
+  });
+  far.renderOrder = -1; // realtime view: draw the far scan first so the near one blends over it
+  return [far, near];
+}
+
+function averageLinear(img) {
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 64;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, 64, 64);
+  const d = ctx.getImageData(0, 0, 64, 64).data;
+  const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < d.length; i += 4) { r += lin(d[i]); g += lin(d[i + 1]); b += lin(d[i + 2]); }
+  const n = d.length / 4;
+  return { r: r / n, g: g / n, b: b / n };
+}
+
+async function loadGround() {
+  const tl = new THREE.TextureLoader();
+  const set = async (id, maps) => {
+    const list = await Promise.all(maps.map((m) => tl.loadAsync(texURL(id, m))));
+    for (const t of list.slice(0, 3)) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = maxAniso; }
+    list[0].colorSpace = THREE.SRGBColorSpace;
+    return { diff: list[0], nor: list[1], arm: list[2], disp: list[3], avg: averageLinear(list[0].image) };
+  };
+  const [near, far] = await Promise.all([
+    set("rocky_trail", ["diff", "nor_gl", "arm", "disp"]),
+    set("aerial_ground_rock", ["diff", "nor_gl", "arm"]),
+  ]);
+  const img = near.disp.image;
+  const cv = document.createElement("canvas");
+  cv.width = img.width; cv.height = img.height;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  dispImg = { data: ctx.getImageData(0, 0, img.width, img.height).data, w: img.width, h: img.height };
+  near.disp.dispose();
+  return { near, far };
+}
+
+// ------------------------------------------------------------------ sky
+// The path tracer lights the scene from the HDR alone: no extra sun light is needed here.
+// Like the WebGL tracer, the WebGPU one stores its environment in 16-bit floats (max 65504) while
+// these suns reach ~350,000. It gets a copy scaled down by PT_ENV_SCALE with the intensity scaled
+// back up; the background keeps the full-range original.
+const skyCache = {};
+const PT_ENV_SCALE = 8;
+let sky = null;
+async function loadSky(id) {
+  if (skyCache[id]) return skyCache[id];
+  const tex = await new HDRLoader().setDataType(THREE.FloatType).loadAsync(skyURL(id));
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  const { data, width: W, height: H } = tex.image;
+  const lum = (i) => 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+  const dOmega = (y) => (TAU / W) * (Math.PI / H) * Math.cos(((1 - (y + 0.5) / H) - 0.5) * Math.PI);
+  let peak = 0, px = 0, py = 0, lowSum = 0, lowW = 0;
+  for (let y = 0; y < H; y++) {
+    const w = dOmega(y);
+    for (let x = 0; x < W; x++) {
+      const L = lum((y * W + x) * 4);
+      if (L > peak) { peak = L; px = x; py = y; }
+      if (y >= H / 2) { lowSum += L * w; lowW += w; }
+    }
+  }
+  const u = (px + 0.5) / W, v = 1 - (py + 0.5) / H;
+  const lat = (v - 0.5) * Math.PI, phi = (u - 0.5) * TAU;
+  const scaled = new Float32Array(data.length);
+  for (let i = 0; i < data.length; i++) scaled[i] = data[i] / PT_ENV_SCALE;
+  const env = new THREE.DataTexture(scaled, W, H, THREE.RGBAFormat, THREE.FloatType);
+  env.mapping = THREE.EquirectangularReflectionMapping;
+  env.colorSpace = tex.colorSpace;
+  env.flipY = tex.flipY;
+  env.minFilter = tex.minFilter; env.magFilter = tex.magFilter; env.generateMipmaps = false;
+  env.needsUpdate = true;
+  const entry = {
+    id, full: tex, env, peak,
+    sunDir: new THREE.Vector3(Math.cos(lat) * Math.cos(phi), Math.sin(lat), Math.cos(lat) * Math.sin(phi)),
+    autoExposure: 0.2 / Math.max(lowSum / lowW, 1e-4), // same rule as the WebGL page, so the two match
+  };
+  skyCache[id] = entry;
+  return entry;
+}
+
+function sunDirection() {
+  // rotate the sky so its sun sits `sunAngle` degrees left of straight ahead (−Z)
+  const a = THREE.MathUtils.degToRad(state.sunAngle);
+  const want = new THREE.Vector3(-Math.sin(a), 0, -Math.cos(a));
+  const d0 = sky.sunDir;
+  const theta = Math.atan2(want.x, want.z) - Math.atan2(d0.x, d0.z);
+  return { theta, dir: d0.clone().applyAxisAngle(Y_AXIS, theta) };
+}
+
+function applySky() {
+  scene.background = sky.full;
+  scene.environment = sky.env;
+  scene.environmentIntensity = PT_ENV_SCALE;
+  const { theta } = sunDirection();
+  scene.backgroundRotation.set(0, theta, 0);
+  scene.environmentRotation.set(0, theta, 0);
+  if (ptReady) { pathTracer.updateEnvironment(); markReset(); }
+}
+
+// ------------------------------------------------------------------ models
+const LIB = {};
+const manager = new THREE.LoadingManager();
+manager.setURLModifier((url) => {
+  const m = url.match(/\/Models\/gltf\/1k\/([^/]+)\/(.+)$/);
+  if (!m) return url;
+  const [, id, rest] = m;
+  if (rest.endsWith(".bin")) return `${PH}/Models/gltf/${BIN_RES[id]}/${id}/${rest}`;
+  if (rest.startsWith("textures/")) return `${PH}/Models/jpg/1k/${id}/${rest.slice(9)}`;
+  return url;
+});
+let filesLoaded = 0, filesTotal = 0;
+manager.onProgress = (url, loaded, total) => { filesLoaded = loaded; filesTotal = total; };
+const gltfLoader = new GLTFLoader(manager);
+
+// Poly Haven sets lay several variants side by side; each top-level node is one plant or rock.
+function extractVariants(gltf) {
+  const root = gltf.scene;
+  root.updateMatrixWorld(true);
+  const out = [];
+  for (const child of [...root.children]) {
+    let tris = 0;
+    child.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = true;
+      o.receiveShadow = true;
+      const g = o.geometry;
+      tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+      // The path tracer packs vertex colour as a float vec4 per vertex. The gazania scans carry 8-bit
+      // colours; store every colour attribute as float RGBA so it reads the same values as the WebGL page.
+      const col = g.attributes.color;
+      if (col && (col.itemSize !== 4 || col.normalized || !(col.array instanceof Float32Array))) {
+        const arr = new Float32Array(col.count * 4);
+        for (let i = 0; i < col.count; i++) {
+          arr[i * 4] = col.getX(i); arr[i * 4 + 1] = col.getY(i); arr[i * 4 + 2] = col.getZ(i);
+          arr[i * 4 + 3] = col.itemSize === 4 ? col.getW(i) : 1;
+        }
+        g.setAttribute("color", new THREE.BufferAttribute(arr, 4));
+      }
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (m.transparent || m.alphaTest > 0) { m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.userData.cutout = true; }
+        if (m.map) m.map.anisotropy = maxAniso;
+      }
+    });
+    if (!tris) continue;
+    const box = new THREE.Box3().setFromObject(child);
+    const c = box.getCenter(new THREE.Vector3());
+    child.position.x -= c.x;
+    child.position.z -= c.z;
+    child.position.y -= box.min.y;
+    const g = new THREE.Group();
+    g.add(child);
+    out.push({ object: g, size: box.getSize(new THREE.Vector3()), tris });
+  }
+  return out;
+}
+
+async function loadModels() {
+  const ids = Object.keys(BIN_RES);
+  const tl = new THREE.TextureLoader(manager);
+  const alphaP = Promise.allSettled(ALPHA_SETS.map((id) => tl.loadAsync(alphaURL(id))));
+  const results = await Promise.allSettled(ids.map((id) => gltfLoader.loadAsync(modelURL(id))));
+  const failed = [];
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") LIB[ids[i]] = extractVariants(r.value);
+    else { failed.push(ids[i]); console.warn("Failed to load", ids[i], r.reason); }
+  });
+  (await alphaP).forEach((r, i) => {
+    const id = ALPHA_SETS[i];
+    if (r.status !== "fulfilled" || !LIB[id]) return;
+    const tex = r.value;
+    tex.flipY = false; // match glTF's texture orientation
+    for (const v of LIB[id]) {
+      v.object.traverse((o) => {
+        if (!o.isMesh) return;
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+          if (!m.userData.cutout && id !== "flower_gazania") continue;
+          m.alphaMap = tex; m.alphaTest = 0.5; m.transparent = false; m.needsUpdate = true;
+        }
+      });
+    }
+  });
+  return failed;
+}
+
+// ------------------------------------------------------------------ layout
+const occupied = [];
+function isFree(x, z, r) {
+  for (const o of occupied) {
+    const dx = o.x - x, dz = o.z - z, rr = o.r + r;
+    if (dx * dx + dz * dz < rr * rr) return false;
+  }
+  return true;
+}
+
+function place(id, vi, x, z, o = {}) {
+  const lib = LIB[id];
+  if (!lib || !lib.length) return null;
+  const v = lib[vi % lib.length];
+  const scale = o.scale ?? 1;
+  const inner = v.object.clone();
+  let size = v.size;
+  if (o.lie) {
+    // lay a standing object on its side and re-seat it on the ground
+    inner.rotation.set(0, 0, Math.PI / 2 + (o.roll ?? 0));
+    inner.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(inner);
+    const c = box.getCenter(new THREE.Vector3());
+    inner.position.set(-c.x, -box.min.y, -c.z);
+    size = box.getSize(new THREE.Vector3());
+  }
+  const wrap = new THREE.Group();
+  wrap.add(inner);
+  wrap.scale.setScalar(scale);
+  const yaw = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, o.rot ?? rand() * TAU);
+  const up = Y_AXIS.clone().lerp(normalAt(x, z), o.tilt ?? 0.5).normalize();
+  wrap.quaternion.setFromUnitVectors(Y_AXIS, up).multiply(yaw);
+  // sit on the lowest ground under the footprint, then sink in: rocks that rest on top of the ground read as fake
+  const fr = 0.5 * Math.max(size.x, size.z) * scale * 0.6;
+  let gy = heightAt(x, z);
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * TAU;
+    gy = Math.min(gy, heightAt(x + Math.cos(a) * fr, z + Math.sin(a) * fr));
+  }
+  wrap.position.set(x, gy - (o.sink ?? 0.04) * size.y * scale, z);
+  world.add(wrap);
+  occupied.push({ x, z, r: o.claim ?? fr * 0.9 });
+  return wrap;
+}
+
+function scatter(id, count, o = {}) {
+  const lib = LIB[id];
+  if (!lib) return;
+  const { rMin = 1.2, rMax = 16, gap = 0.04, scale = [0.85, 1.2], sink = 0.03, tilt = 0.5, mask = null, around = null, behind = 0.3 } = o;
+  let placed = 0;
+  for (let tries = 0; placed < count && tries < count * 80; tries++) {
+    let x, z;
+    if (around) {
+      const a = around[Math.floor(rand() * around.length)];
+      const ang = rand() * TAU, dist = a.r * (0.75 + rand() * 0.8);
+      x = a.x + Math.cos(ang) * dist; z = a.z + Math.sin(ang) * dist;
+    } else {
+      const r = Math.sqrt(rand() * (rMax * rMax - rMin * rMin) + rMin * rMin), ang = rand() * TAU;
+      x = r * Math.cos(ang); z = r * Math.sin(ang);
+    }
+    if (Math.abs(Math.atan2(x, -z)) > 0.95 && rand() > behind) continue; // thinner outside the main view
+    if (mask && rand() > mask(x, z)) continue;
+    if (Math.hypot(x, z) < 1.0) continue; // keep the tripod spot clear
+    const vi = Math.floor(rand() * lib.length);
+    const v = lib[vi];
+    const s = scale[0] + rand() * (scale[1] - scale[0]);
+    const r = 0.5 * Math.max(v.size.x, v.size.z) * s * 0.75 + gap;
+    if (!isFree(x, z, r)) continue;
+    place(id, vi, x, z, { scale: s, sink, tilt, claim: r });
+    placed++;
+  }
+}
+
+const HERO = new THREE.Vector3(-0.9, 0, -7.6);
+function buildLayout() {
+  rand = mulberry32(20230905);
+  // hero quiver tree, background trees
+  place("quiver_tree_01", 0, HERO.x, HERO.z, { rot: 0.6, scale: 1.55, sink: 0.01, tilt: 0, claim: 0.8 });
+  place("quiver_tree_02", 0, 5.4, -15.5, { rot: 2.1, scale: 1.75, sink: 0.01, tilt: 0, claim: 0.7 });
+  place("quiver_tree_02", 0, -9.5, -22, { rot: 4.0, scale: 2.2, sink: 0.01, tilt: 0, claim: 0.8 });
+  place("quiver_tree_01", 0, 15, -27, { rot: 2.7, scale: 1.5, sink: 0.01, tilt: 0, claim: 0.8 });
+  // boulders: the big ones frame the tree, the small ones lead the eye in
+  const rocks = [
+    ["namaqualand_boulder_04", -4.3, -9.8, 1.2, 1.0, 0.16],
+    ["namaqualand_boulder_03", 3.7, -11.2, 2.4, 1.0, 0.14],
+    ["namaqualand_boulder_02", 1.9, -5.2, 0.3, 1.0, 0.14],
+    ["namaqualand_boulder_05", -2.5, -3.7, 2.0, 1.0, 0.18],
+    ["namaqualand_boulder_06", 3.0, -2.9, 0.9, 1.0, 0.18],
+    ["namaqualand_boulder_03", -7.2, -16.5, 5.0, 1.5, 0.15],
+    ["namaqualand_boulder_04", 8.5, -19, 3.1, 1.6, 0.15],
+    ["namaqualand_boulder_02", -0.8, -12.5, 4.4, 1.3, 0.14],
+  ];
+  const rockSpots = [];
+  for (const [id, x, z, rot, scale, sink] of rocks) {
+    const w = place(id, 0, x, z, { rot, scale, sink, tilt: 0.4 });
+    if (w) {
+      const v = LIB[id][0];
+      rockSpots.push({ x, z, r: 0.5 * Math.max(v.size.x, v.size.z) * scale });
+    }
+  }
+  place("namaqualand_cliff_01", 0, -15, -29, { rot: 0.4, scale: 1.9, sink: 0.14, tilt: 0.2 });
+  place("namaqualand_cliff_01", 0, 16, -36, { rot: 3.6, scale: 1.6, sink: 0.16, tilt: 0.2 });
+  // small rocks cluster around the boulders, a few loose across the slope
+  scatter("namaqualand_boulders_01", 8, { around: rockSpots, sink: 0.2, tilt: 0.7, scale: [0.7, 1.3] });
+  scatter("namaqualand_rocks_01", 8, { around: rockSpots, sink: 0.25, tilt: 0.8, scale: [0.8, 1.4] });
+  scatter("namaqualand_stones_01", 12, { rMin: 1.2, rMax: 12, sink: 0.25, tilt: 0.9, scale: [0.9, 1.6] });
+  // plants: shrubs mid-ground, succulents in the rock margins, spring daisies in patches
+  // far boulders and shrubs out to the fade, so the join with the photo's own hillside is broken up
+  const far = ["namaqualand_boulder_02", "namaqualand_boulder_03", "namaqualand_boulder_04", "namaqualand_boulder_05", "namaqualand_boulder_06", "namaqualand_boulder_04"];
+  for (const id of far) scatter(id, 1, { rMin: 16, rMax: 40, sink: 0.18, tilt: 0.4, scale: [0.9, 1.7], behind: 0.15 });
+  scatter("othonna_cerarioides", 16, { rMin: 5, rMax: 40, sink: 0.02, tilt: 0.2, scale: [0.8, 1.2] });
+  scatter("wild_rooibos_bush", 70, { rMin: 2.5, rMax: 44, sink: 0.03, tilt: 0.3, scale: [0.9, 1.7] });
+  // a denser band of shrubs where the terrain meets the photo, mostly in the main view
+  scatter("othonna_cerarioides", 8, { rMin: 18, rMax: 40, sink: 0.02, tilt: 0.2, scale: [0.9, 1.3], behind: 0.05 });
+  for (const id of ["namaqualand_boulder_03", "namaqualand_boulder_04", "namaqualand_boulder_03", "namaqualand_boulder_04"]) {
+    scatter(id, 1, { rMin: 20, rMax: 36, sink: 0.2, tilt: 0.3, scale: [1.0, 1.8], behind: 0.02 });
+  }
+  scatter("wild_rooibos_bush", 40, { rMin: 16, rMax: 40, sink: 0.03, tilt: 0.3, scale: [1.2, 2.0], behind: 0.05 });
+  scatter("cheiridopsis_succulent", 10, { around: rockSpots, sink: 0.05, tilt: 0.7 });
+  scatter("crystalline_iceplant", 18, { around: rockSpots, sink: 0.02, tilt: 0.8, scale: [0.9, 1.6] });
+  const patches = (x, z) => smoothstep(-0.12, 0.35, fbm(x * 0.21 + 5, z * 0.21 - 3, 3, 91));
+  scatter("flower_gazania", 150, { rMin: 1.2, rMax: 17, mask: patches, sink: 0.02, tilt: 0.5, scale: [0.85, 1.25] });
+  scatter("flower_ursinia", 45, { rMin: 1.2, rMax: 15, mask: patches, sink: 0.02, tilt: 0.5 });
+  scatter("flower_empodium", 70, { rMin: 1.2, rMax: 14, mask: (x, z) => 0.3 + 0.7 * patches(x + 9, z - 4), sink: 0.02, tilt: 0.4 });
+}
+
+// ------------------------------------------------------------------ path tracer
+let pathTracer = null;
+let ptReady = false;
+const denoisers = {};
+function getDenoiser(kind) {
+  if (kind === "off") return null;
+  // one instance per network: each caches its own loaded weights
+  if (!denoisers[kind]) denoisers[kind] = new OIDNDenoiser({ initUNetFromURL, auxWeightsUrl: OIDN_WEIGHTS[kind] });
+  return denoisers[kind];
+}
+// timings for the HUD and for comparing against the WebGL page
+const metrics = { resetAt: performance.now(), capAt: null, denoisedAt: null, bvhMs: 0 };
+function markReset() {
+  metrics.resetAt = performance.now(); metrics.capAt = null; metrics.denoisedAt = null;
+  counts = { min: 0, max: 0, avg: 0 }; // the last measurement belongs to the old image
+}
+
+async function buildPathTracer(tris, uniqueTris) {
+  overlay(`Building ray-tracing structures for ${fmtM(uniqueTris)} unique triangles (${fmtM(tris)} placed)…`);
+  setStatus("Building BVHs…");
+  await nextFrame(); await nextFrame();
+  const t0 = performance.now();
+  pathTracer = new WebGPUPathTracer(renderer);
+  pathTracer.maxBounces = state.bounces;
+  pathTracer.filterGlossyFactor = 0.5;
+  pathTracer.minSamples = 1;
+  pathTracer.renderDelay = 150;
+  pathTracer.fadeDuration = 250;
+  pathTracer.lowResScale = 0.2;
+  pathTracer.renderScale = RES[state.res] / renderer.getPixelRatio();
+  pathTracer.maxSamples = state.maxSamples;
+  // One BVH per unique geometry plus a top-level BVH over the instances: the ~730 placed meshes
+  // share 87 geometry BVHs, so this builds in a few seconds instead of the WebGL page's 10-20 s merge.
+  pathTracer.setScene(scene, camera);
+  pathTracer.setDenoiser(getDenoiser(state.denoiser));
+  metrics.bvhMs = performance.now() - t0;
+  ptReady = true;
+  markReset();
+  overlay(null);
+  return metrics.bvhMs;
+}
+
+function updatePTCamera() {
+  if (ptReady) { pathTracer.updateCamera(); markReset(); }
+}
+
+// ------------------------------------------------------------------ finishing pass (TSL: exposure, glare, fringing, vignette; tone map + sRGB in the pipeline)
+// The path tracer blits linear HDR into this target; the pipeline grades it onto the canvas.
+const hdrRT = new THREE.RenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+const uExposure = uniform(1);
+const uGlare = uniform(0.15);
+const uVignette = uniform(0.55);
+const uFringe = uniform(0.0022);
+const uTanHalf = uniform(new THREE.Vector2(0.4, 0.3));
+const hdrColor = texture(hdrRT.texture);
+// clamp before the bloom so the sun's 10^5 values glow instead of whiting out the frame
+const glare = bloom(vec4(min(hdrColor.rgb.mul(uExposure), vec3(10)), 1), 1, 0.6, 4);
+const fringeOffset = uv().sub(0.5).mul(uFringe);
+const fringed = vec3(texture(hdrRT.texture, uv().sub(fringeOffset)).r, hdrColor.g, texture(hdrRT.texture, uv().add(fringeOffset)).b);
+const lensT = uv().mul(2).sub(1).mul(uTanHalf);
+const cos2 = float(1).div(dot(lensT, lensT).add(1)); // cos^2 of the angle off the lens axis
+const graded = fringed.mul(uExposure).add(glare.rgb.mul(uGlare)).mul(mix(float(1), cos2.mul(cos2), uVignette));
+const pipeline = new THREE.RenderPipeline(renderer, vec4(graded, 1));
+
+function exposureValue() { return (sky ? sky.autoExposure : 1) * Math.pow(2, state.ev); }
+
+// ------------------------------------------------------------------ focus picking
+// The path tracer leaves a MeshBVH on every geometry (geometry.boundsTree), so raycasts are cheap.
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
+const raycaster = new THREE.Raycaster();
+raycaster.firstHitOnly = true;
+function pickDistance(cx, cy) {
+  const rect = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const hit = raycaster.intersectObject(world, true)[0];
+  return hit ? hit.distance : null;
+}
+
+// ------------------------------------------------------------------ camera & views
+const focusToSlider = (d) => Math.log(d / 0.2) / Math.log(500);
+const sliderToFocus = (t) => 0.2 * Math.pow(500, t);
+function applyLens() {
+  camera.setFocalLength(state.lens);
+  camera.fStop = state.fstop ? state.fstop : Infinity; // Infinity = pinhole, the path tracer drops depth of field
+  camera.focusDistance = state.focus;
+  camera.updateProjectionMatrix();
+  updatePTCamera();
+}
+function syncCameraUI() {
+  $("lens").value = LENSES.indexOf(state.lens) >= 0 ? LENSES.indexOf(state.lens) : 4;
+  $("fstop").value = FSTOPS.indexOf(state.fstop);
+  $("focus").value = focusToSlider(state.focus);
+  for (const id of ["lens", "fstop", "focus"]) $(id).dispatchEvent(new Event("sync"));
+}
+function clampAboveGround() {
+  if (!dispImg) return;
+  const p = camera.position;
+  const min = heightAt(p.x, p.z) + 0.12;
+  if (p.y < min) p.y = min;
+}
+function setView(name) {
+  if (name === "sun" && !sky) return;
+  let pos, target, lens, fstop, focus;
+  if (name === "eye") { pos = [0.25, 1.5, 0.6]; target = [HERO.x, 1.35, HERO.z]; lens = 35; fstop = 5.6; }
+  else if (name === "low") { pos = [1.2, 0.32, -1.6]; target = [HERO.x, 1.0, HERO.z]; lens = 24; fstop = 2.8; focus = 1.6; }
+  else if (name === "wide") { pos = [7.5, 3.6, 5.5]; target = [-1.5, 0.8, -9]; lens = 24; fstop = 8; }
+  else {
+    const d = sunDirection().dir.setY(0).normalize();
+    const p = HERO.clone().addScaledVector(d, -9.5);
+    p.x += 1.2;
+    pos = [p.x, heightAt(p.x, p.z) + 1.0, p.z];
+    target = [HERO.x, heightAt(HERO.x, HERO.z) + 2.0, HERO.z];
+    lens = 50; fstop = 8;
+  }
+  camera.position.set(...pos);
+  controls.target.set(...target);
+  if (dispImg) {
+    camera.position.y += heightAt(pos[0], pos[2]) * (name === "sun" ? 0 : 1);
+    controls.target.y += name === "sun" ? 0 : heightAt(target[0], target[2]);
+  }
+  controls.update();
+  Object.assign(state, { lens, fstop, focus: focus ?? camera.position.distanceTo(controls.target) });
+  applyLens();
+  syncCameraUI();
+}
+
+// ------------------------------------------------------------------ resize & loop
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / Math.max(1, h);
+  camera.setFocalLength(state.lens);
+  camera.updateProjectionMatrix();
+  const db = renderer.getDrawingBufferSize(new THREE.Vector2());
+  hdrRT.setSize(db.x, db.y);
+  if (ptReady) pathTracer.renderScale = RES[state.res] / renderer.getPixelRatio();
+  updatePTCamera();
+}
+
+let hudTimer = 0;
+let counts = { min: 0, avg: 0 };
+let countsBusy = false;
+function frame() {
+  controls.update();
+  renderer.setRenderTarget(hdrRT);
+  if (ptReady) {
+    // Holding compare hides the denoised result for this frame only. (setDenoiser(null) would throw
+    // the finished result away, and the tracer reads this field fresh on every renderSample.)
+    const denoiser = pathTracer._denoiser;
+    if (state.compare) pathTracer._denoiser = null;
+    pathTracer.renderSample();
+    pathTracer._denoiser = denoiser;
+    const now = performance.now();
+    if (!metrics.capAt && pathTracer.maxSamples > 0 && counts.min >= pathTracer.maxSamples) metrics.capAt = now;
+    if (!metrics.denoisedAt && denoiser && denoiser.complete) metrics.denoisedAt = now;
+  } else {
+    renderer.render(scene, camera); // raster preview while the scans load
+  }
+  renderer.setRenderTarget(null);
+
+  uExposure.value = exposureValue();
+  uGlare.value = state.bloom;
+  uVignette.value = state.vignette;
+  uFringe.value = state.ca ? 0.0022 : 0;
+  const th = Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV() / 2));
+  uTanHalf.value.set(th * camera.aspect, th);
+  pipeline.render();
+
+  const now = performance.now();
+  if (now - hudTimer > 250) {
+    hudTimer = now;
+    if (ptReady && !countsBusy) {
+      countsBusy = true;
+      const resetAt = metrics.resetAt;
+      pathTracer.getSampleCountsAsync().then((c) => { if (metrics.resetAt === resetAt) counts = c; countsBusy = false; }, () => { countsBusy = false; });
+    }
+    let t = "";
+    if (!ptReady) t = sky ? "Raster preview (path tracer not ready yet)" : "";
+    else {
+      const secs = (t0) => ((t0 - metrics.resetAt) / 1000).toFixed(1) + " s";
+      const d = pathTracer._denoiser;
+      t = `Path traced · ${Math.floor(counts.avg)} samples/pixel`;
+      if (state.compare) t += " · raw samples";
+      else if (d && d.complete) t += ` · denoised, clean at ${secs(metrics.denoisedAt ?? now)}`;
+      else if (d && d.running) t += ` · denoising (${secs(now)})`;
+      else if (metrics.capAt) t += ` · stopped at ${secs(metrics.capAt)}`;
+      else t += ` · ${secs(now)}`;
+    }
+    $("hud").textContent = t;
+  }
+}
+
+// ------------------------------------------------------------------ UI
+function bindRange(id, fmt, onInput) {
+  const el = $(id), out = el.parentElement.querySelector("output");
+  const show = () => { if (out) out.textContent = fmt(+el.value); };
+  el.addEventListener("input", () => { show(); onInput(+el.value); });
+  el.addEventListener("sync", show);
+  show();
+}
+bindRange("maxSamples", (v) => String(SAMPLE_STOPS[v]), (v) => {
+  state.maxSamples = SAMPLE_STOPS[v];
+  if (ptReady) { pathTracer.maxSamples = state.maxSamples; metrics.capAt = null; metrics.denoisedAt = null; }
+});
+bindRange("res", (v) => RES_LABEL[v], (v) => { state.res = v; if (ptReady) { pathTracer.renderScale = RES[v] / renderer.getPixelRatio(); updatePTCamera(); } });
+bindRange("bounces", (v) => String(v), (v) => { state.bounces = v; if (ptReady) { pathTracer.maxBounces = v; markReset(); } });
+bindRange("sunAngle", (v) => (v === 0 ? "ahead" : `${Math.abs(v)}° ${v > 0 ? "L" : "R"}`), (v) => { state.sunAngle = v; if (sky) applySky(); });
+bindRange("ev", (v) => (v > 0 ? "+" : "") + v.toFixed(1), (v) => { state.ev = v; });
+bindRange("lens", (v) => `${LENSES[v]} mm`, (v) => { state.lens = LENSES[v]; applyLens(); });
+bindRange("fstop", (v) => (FSTOPS[v] ? `f/${FSTOPS[v]}` : "pinhole"), (v) => { state.fstop = FSTOPS[v]; applyLens(); });
+bindRange("focus", (v) => { const d = sliderToFocus(v); return d < 10 ? `${d.toFixed(1)} m` : `${Math.round(d)} m`; }, (v) => { state.focus = sliderToFocus(v); applyLens(); });
+bindRange("bloom", (v) => v.toFixed(2), (v) => { state.bloom = v; });
+bindRange("vignette", (v) => v.toFixed(2), (v) => { state.vignette = v; });
+$("ca").addEventListener("change", (e) => { state.ca = e.target.checked; });
+$("tone").addEventListener("change", (e) => {
+  state.tone = +e.target.value;
+  renderer.toneMapping = TONES[state.tone];
+  pipeline.needsUpdate = true;
+});
+$("denoiser").addEventListener("change", (e) => {
+  state.denoiser = e.target.value;
+  if (ptReady) { pathTracer.setDenoiser(getDenoiser(state.denoiser)); metrics.denoisedAt = null; }
+});
+const cmp = $("compare");
+const hold = (on) => { state.compare = on; cmp.classList.toggle("held", on); };
+cmp.addEventListener("pointerdown", (e) => { cmp.setPointerCapture(e.pointerId); hold(true); });
+cmp.addEventListener("pointerup", () => hold(false));
+cmp.addEventListener("pointercancel", () => hold(false));
+window.addEventListener("keydown", (e) => { if ((e.key === "c" || e.key === "C") && !e.repeat && e.target.tagName !== "INPUT") hold(true); });
+window.addEventListener("keyup", (e) => { if (e.key === "c" || e.key === "C") hold(false); });
+window.addEventListener("blur", () => hold(false));
+for (const b of document.querySelectorAll("[data-view]")) b.addEventListener("click", () => setView(b.dataset.view));
+
+const skySel = $("sky");
+for (const [id, label] of Object.entries(SKIES)) skySel.add(new Option(label, id));
+skySel.addEventListener("change", async () => {
+  const id = skySel.value;
+  state.sky = id;
+  skySel.disabled = true;
+  setStatus(`Loading sky: ${SKIES[id]}…`);
+  try {
+    const s = await loadSky(id);
+    if (state.sky === id) { sky = s; applySky(); }
+    setStatus(readyText);
+  } catch (err) {
+    console.error(err);
+    setStatus(`Couldn't load that sky (${err.message || err}).`);
+  }
+  skySel.disabled = false;
+});
+
+// click (not drag) to focus
+let down = null;
+canvas.addEventListener("pointerdown", (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+canvas.addEventListener("pointerup", (e) => {
+  if (!down) return;
+  const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+  const quick = performance.now() - down.t < 450;
+  down = null;
+  if (moved > 4 || !quick || !ptReady) return;
+  const d = pickDistance(e.clientX, e.clientY);
+  if (!d) return;
+  state.focus = d;
+  applyLens();
+  syncCameraUI();
+  const dot = $("focusDot"), rect = view.getBoundingClientRect();
+  dot.style.left = `${e.clientX - rect.left}px`;
+  dot.style.top = `${e.clientY - rect.top}px`;
+  dot.style.transition = "none"; dot.style.opacity = "1";
+  requestAnimationFrame(() => { dot.style.transition = "opacity 0.8s 0.4s"; dot.style.opacity = "0"; });
+});
+controls.addEventListener("change", () => { clampAboveGround(); updatePTCamera(); });
+
+// ------------------------------------------------------------------ boot
+let readyText = "";
+async function main() {
+  if (!navigator.gpu) throw new Error("this browser has no WebGPU (navigator.gpu is missing). The WebGL page, index.html, still works.");
+  await renderer.init();
+  if (!renderer.backend.isWebGPUBackend) throw new Error("WebGPU isn't available, so three.js fell back to WebGL 2. This tracer needs WebGPU compute; use index.html instead.");
+  maxAniso = renderer.getMaxAnisotropy?.() ?? 8;
+  new ResizeObserver(resize).observe(view);
+  window.addEventListener("resize", resize);
+  resize();
+  renderer.setAnimationLoop(frame);
+
+  setView("eye");
+  overlay("Loading the sky and ground scan…");
+  const groundP = loadGround();
+  const skyP = loadSky(state.sky);
+  const modelsP = loadModels();
+  const progress = setInterval(() => {
+    if (filesTotal) setStatus(`Loading scans: ${filesLoaded} / ${filesTotal} files`);
+  }, 250);
+
+  const [groundTex, firstSky] = await Promise.all([groundP, skyP]);
+  sky = firstSky;
+  for (const m of buildGround(groundTex)) world.add(m);
+  applySky();
+  setView("eye");
+  overlay(`Loading ${Object.keys(BIN_RES).length} photoscanned models (about 80 MB)…`);
+
+  const failed = await modelsP;
+  clearInterval(progress);
+  buildLayout();
+
+  let tris = 0, uniqueTris = 0, meshes = 0;
+  const geometries = new Set();
+  world.traverse((o) => {
+    if (!o.isMesh) return;
+    meshes++;
+    const g = o.geometry;
+    const n = (g.index ? g.index.count : g.attributes.position.count) / 3;
+    tris += n;
+    if (!geometries.has(g)) { geometries.add(g); uniqueTris += n; }
+  });
+  const lost = failed.length ? ` ${failed.length} model(s) failed to load: ${failed.join(", ")}.` : "";
+  const ms = await buildPathTracer(tris, uniqueTris);
+  readyText = `Ready. ${fmtM(tris)} triangles placed, ${fmtM(uniqueTris)} unique in ${geometries.size} geometries. BVHs built in ${(ms / 1000).toFixed(1)} s.${lost}`;
+  setStatus(readyText);
+}
+main().catch((err) => {
+  console.error(err);
+  overlay(`Can't start: ${err.message || err}`);
+  setStatus(`Something failed: ${err.message || err}`);
+});
+
+window.env = {
+  THREE, renderer, scene, camera, controls, state, world, LIB, setView, applySky, heightAt, pickDistance,
+  pipeline, hdrRT, metrics,
+  get pathTracer() { return pathTracer; }, get sky() { return sky; }, get ptReady() { return ptReady; },
+  get counts() { return counts; },
+  frame, resize, // call by hand when the tab is hidden and rAF is throttled
+};
+</script>
+</body>
+</html>
